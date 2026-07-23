@@ -21,6 +21,12 @@ import {
   MAX_CONCURRENT_AI_REQUESTS,
 } from "./aiUsage";
 import { GeneratedSchedule, generatedScheduleSchema } from "./schedule";
+import {
+  AI_MODEL,
+  estimateCostMicros,
+  normalizeTokenUsage,
+  type AiTokenUsage,
+} from "./cost";
 
 const openAi = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
@@ -115,6 +121,7 @@ export const generateGptResponse: GenerateGptResponse<
           userId: context.user!.id,
           operation: "generate_schedule",
           idempotencyKey: requestKey,
+          model: AI_MODEL,
           status: AiUsageStatus.Processing,
         },
       });
@@ -144,8 +151,8 @@ export const generateGptResponse: GenerateGptResponse<
         },
       },
     });
-    const generatedSchedule = await generateScheduleWithGpt(tasks, hours);
-    if (generatedSchedule === null) {
+    const generation = await generateScheduleWithGpt(tasks, hours);
+    if (generation === null) {
       throw new Error("OpenAI returned no structured schedule");
     }
 
@@ -154,7 +161,7 @@ export const generateGptResponse: GenerateGptResponse<
       const response = await tx.gptResponse.create({
         data: {
           userId: context.user!.id,
-          content: JSON.stringify(generatedSchedule),
+          content: JSON.stringify(generation.schedule),
         },
       });
       await tx.aiUsageLog.update({
@@ -163,6 +170,11 @@ export const generateGptResponse: GenerateGptResponse<
           status: AiUsageStatus.Completed,
           completedAt: new Date(),
           durationMs: Date.now() - startedAt,
+          model: AI_MODEL,
+          promptTokens: generation.usage.promptTokens,
+          completionTokens: generation.usage.completionTokens,
+          totalTokens: generation.usage.totalTokens,
+          estimatedCostMicros: estimateCostMicros(AI_MODEL, generation.usage),
           responseId: response.id,
         },
       });
@@ -343,14 +355,14 @@ export const getAllTasksByUser: GetAllTasksByUser<void, Task[]> = async (
 async function generateScheduleWithGpt(
   tasks: Task[],
   hours: number,
-): Promise<GeneratedSchedule | null> {
+): Promise<{ schedule: GeneratedSchedule; usage: AiTokenUsage } | null> {
   const parsedTasks = tasks.map(({ description, time }) => ({
     description,
     time,
   }));
 
   const completion = await openAi.chat.completions.create({
-    model: "gpt-3.5-turbo", // you can use any model here, e.g. 'gpt-3.5-turbo', 'gpt-4', etc.
+    model: AI_MODEL,
     messages: [
       {
         role: "system",
@@ -388,6 +400,9 @@ async function generateScheduleWithGpt(
   )?.function.arguments;
 
   return gptResponse !== undefined
-    ? generatedScheduleSchema.parse(JSON.parse(gptResponse))
+    ? {
+        schedule: generatedScheduleSchema.parse(JSON.parse(gptResponse)),
+        usage: normalizeTokenUsage(completion.usage),
+      }
     : null;
 }

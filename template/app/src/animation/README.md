@@ -18,6 +18,17 @@ wasp db migrate-dev
 
 默认从 `PATH` 查找 `ffmpeg`，也可以在 `.env.server` 设置 `FFMPEG_PATH`。视频文件沿用已有 AWS S3 配置，下载接口只返回限时签名 URL。
 
+## Playwright E2E
+
+`template/e2e-tests/tests/animationVideoTests.spec.ts` 覆盖登录、保存动画、选择 WebM、提交转换任务、轮询终态、成功下载以及失败重试分支。
+运行前启动 Wasp 数据库和应用，并安装 Chromium、FFmpeg 和测试依赖：
+
+```bash
+npx playwright install chromium
+cd ../e2e-tests && npm install
+npx playwright test tests/animationVideoTests.spec.ts
+```
+
 ## 设计边界
 
 - HTML 在无头 Chromium 中渲染为固定 1280x720 帧，编码参数由服务端固定，避免客户端传入命令参数。

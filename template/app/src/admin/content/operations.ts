@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import type { Author, Post, Tag } from "wasp/entities";
 import { HttpError, prisma } from "wasp/server";
 import type {
@@ -63,6 +64,22 @@ function throwPersistenceError(error: unknown, message: string): never {
     throw new HttpError(409, message);
   }
   throw error;
+}
+
+type PublicationEventType = "published" | "updated" | "unpublished" | "deleted";
+
+/** 在同一数据库事务里记录发布事件，避免文章状态和静态产物状态分离。 */
+async function enqueuePublicationEvent(
+  tx: Prisma.TransactionClient,
+  input: { postId: string; slug: string; eventType: PublicationEventType },
+) {
+  await tx.cmsPublicationEvent.create({
+    data: {
+      postId: input.postId,
+      slug: input.slug,
+      eventType: input.eventType,
+    },
+  });
 }
 
 const postInclude = {
@@ -136,7 +153,17 @@ export const createPost: CreatePost<PostInput, AdminPost> = async (
   ensureAdmin(context);
   const input = ensureArgsSchemaOrThrowHttpError(postInputSchema, rawArgs);
   try {
-    const post = await prisma.post.create({ data: buildPostData(input) });
+    const post = await prisma.$transaction(async (tx) => {
+      const created = await tx.post.create({ data: buildPostData(input) });
+      if (created.status === "published") {
+        await enqueuePublicationEvent(tx, {
+          postId: created.id,
+          slug: created.slug,
+          eventType: "published",
+        });
+      }
+      return created;
+    });
     return findAdminPost(post.id);
   } catch (error) {
     throwPersistenceError(error, "Post slug is already in use");
@@ -157,9 +184,9 @@ export const updatePost: UpdatePost<UpdatePostInput, AdminPost> = async (
     await prisma.$transaction(async (tx) => {
       const currentPost = await tx.post.findUnique({
         where: { id },
-        select: { publishedAt: true },
+        select: { slug: true, status: true, publishedAt: true },
       });
-      await tx.post.update({
+      const updatedPost = await tx.post.update({
         where: { id },
         data: {
           title: input.title,
@@ -180,6 +207,20 @@ export const updatePost: UpdatePost<UpdatePostInput, AdminPost> = async (
           },
         },
       });
+      if (updatedPost.status === "published") {
+        await enqueuePublicationEvent(tx, {
+          postId: updatedPost.id,
+          slug: updatedPost.slug,
+          eventType:
+            currentPost?.status === "published" ? "updated" : "published",
+        });
+      } else if (currentPost?.status === "published") {
+        await enqueuePublicationEvent(tx, {
+          postId: updatedPost.id,
+          slug: currentPost.slug,
+          eventType: "unpublished",
+        });
+      }
     });
     return findAdminPost(id);
   } catch (error) {
@@ -196,7 +237,21 @@ export const deletePost: DeletePost<DeleteInput, DeleteInput> = async (
     z.object({ id: z.string().uuid() }),
     rawArgs,
   );
-  await prisma.post.delete({ where: { id } });
+  await prisma.$transaction(async (tx) => {
+    const post = await tx.post.findUnique({
+      where: { id },
+      select: { slug: true, status: true },
+    });
+    if (!post) throw new HttpError(404, "Post not found");
+    await tx.post.delete({ where: { id } });
+    if (post.status === "published") {
+      await enqueuePublicationEvent(tx, {
+        postId: id,
+        slug: post.slug,
+        eventType: "deleted",
+      });
+    }
+  });
   return { id };
 };
 
@@ -225,13 +280,27 @@ export const updateAuthor: UpdateAuthor<UpdateAuthorInput, Author> = async (
     rawArgs,
   );
   const input = rawAuthor as AuthorInput;
-  return prisma.author.update({
-    where: { id },
-    data: {
-      displayName: input.displayName,
-      email: input.email || null,
-      bio: input.bio || null,
-    },
+  return prisma.$transaction(async (tx) => {
+    const author = await tx.author.update({
+      where: { id },
+      data: {
+        displayName: input.displayName,
+        email: input.email || null,
+        bio: input.bio || null,
+      },
+    });
+    const publishedPosts = await tx.post.findMany({
+      where: { authorId: id, status: "published" },
+      select: { id: true, slug: true },
+    });
+    for (const post of publishedPosts) {
+      await enqueuePublicationEvent(tx, {
+        postId: post.id,
+        slug: post.slug,
+        eventType: "updated",
+      });
+    }
+    return author;
   });
 };
 
@@ -273,7 +342,21 @@ export const updateTag: UpdateTag<UpdateTagInput, Tag> = async (
   );
   const input = rawTag as TagInput;
   try {
-    return await prisma.tag.update({ where: { id }, data: input });
+    return await prisma.$transaction(async (tx) => {
+      const tag = await tx.tag.update({ where: { id }, data: input });
+      const publishedPosts = await tx.post.findMany({
+        where: { status: "published", tags: { some: { tagId: id } } },
+        select: { id: true, slug: true },
+      });
+      for (const post of publishedPosts) {
+        await enqueuePublicationEvent(tx, {
+          postId: post.id,
+          slug: post.slug,
+          eventType: "updated",
+        });
+      }
+      return tag;
+    });
   } catch (error) {
     throwPersistenceError(error, "Tag name or slug is already in use");
   }

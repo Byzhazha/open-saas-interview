@@ -1,4 +1,4 @@
-import { action, page, query, route, type Spec } from "@wasp.sh/spec";
+import { action, job, page, query, route, type Spec } from "@wasp.sh/spec";
 
 import { ContentPage } from "./ContentPage" with { type: "ref" };
 import {
@@ -14,6 +14,11 @@ import {
   updatePost,
   updateTag,
 } from "./operations" with { type: "ref" };
+import {
+  getPublishedPost,
+  getPublishedPosts,
+} from "./publicOperations" with { type: "ref" };
+import { syncCmsPublicationJob } from "./publicationJob" with { type: "ref" };
 
 export const contentSpec: Spec = [
   route(
@@ -23,6 +28,8 @@ export const contentSpec: Spec = [
   ),
   query(getAdminPosts, { entities: ["Post", "Author", "Tag", "PostTag"] }),
   query(getCmsLookups, { entities: ["Author", "Tag"] }),
+  query(getPublishedPosts, { entities: ["Post", "Author", "Tag", "PostTag"] }),
+  query(getPublishedPost, { entities: ["Post", "Author", "Tag", "PostTag"] }),
   action(createPost, { entities: ["Post", "Author", "Tag", "PostTag"] }),
   action(updatePost, { entities: ["Post", "Author", "Tag", "PostTag"] }),
   action(deletePost, { entities: ["Post"] }),
@@ -32,4 +39,9 @@ export const contentSpec: Spec = [
   action(createTag, { entities: ["Tag"] }),
   action(updateTag, { entities: ["Tag"] }),
   action(deleteTag, { entities: ["Tag", "PostTag"] }),
+  job(syncCmsPublicationJob, {
+    executor: "PgBoss",
+    schedule: { cron: "*/1 * * * *" },
+    entities: ["CmsPublicationEvent", "Post", "Author", "Tag", "PostTag"],
+  }),
 ];

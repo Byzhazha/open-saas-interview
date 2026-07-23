@@ -123,6 +123,7 @@ export function AnimationPage() {
           <CardContent className="space-y-4">
             <Field label="Saved animation">
               <select
+                data-testid="animation-selector"
                 className="border-input bg-background h-10 w-full rounded-md border px-3 text-sm"
                 value={selectedId}
                 onChange={(event) => {
@@ -145,18 +146,24 @@ export function AnimationPage() {
             </Field>
             <Field label="Title">
               <Input
+                data-testid="animation-title"
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
               />
             </Field>
             <Field label="HTML / CSS / JavaScript">
               <Textarea
+                data-testid="animation-html"
                 className="min-h-72 font-mono text-xs"
                 value={htmlContent}
                 onChange={(event) => setHtmlContent(event.target.value)}
               />
             </Field>
-            <Button onClick={saveAnimation} disabled={isSaving}>
+            <Button
+              data-testid="save-animation"
+              onClick={saveAnimation}
+              disabled={isSaving}
+            >
               {selectedId ? "Save animation" : "Save new animation"}
             </Button>
           </CardContent>
@@ -176,6 +183,7 @@ export function AnimationPage() {
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Format">
                 <select
+                  data-testid="video-format"
                   className="border-input bg-background h-10 w-full rounded-md border px-3 text-sm"
                   value={format}
                   onChange={(event) =>
@@ -188,6 +196,7 @@ export function AnimationPage() {
               </Field>
               <Field label="Seconds">
                 <Input
+                  data-testid="video-duration"
                   type="number"
                   min={1}
                   max={30}
@@ -199,6 +208,7 @@ export function AnimationPage() {
               </Field>
               <Field label="FPS">
                 <Input
+                  data-testid="video-fps"
                   type="number"
                   min={12}
                   max={60}
@@ -207,10 +217,21 @@ export function AnimationPage() {
                 />
               </Field>
             </div>
-            <Button onClick={queueVideo} disabled={isSaving || !selectedId}>
+            <Button
+              data-testid="queue-video"
+              onClick={queueVideo}
+              disabled={isSaving || !selectedId}
+            >
               Queue video conversion
             </Button>
-            {error && <p className="text-destructive text-sm">{error}</p>}
+            {error && (
+              <p
+                data-testid="animation-error"
+                className="text-destructive text-sm"
+              >
+                {error}
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -219,7 +240,7 @@ export function AnimationPage() {
         <CardHeader>
           <CardTitle>Conversion jobs</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent data-testid="video-jobs" className="space-y-3">
           {jobs.length === 0 && (
             <p className="text-muted-foreground text-sm">
               No conversion jobs yet.
@@ -262,24 +283,40 @@ function JobRow({
   };
 
   return (
-    <div className="border-border flex flex-wrap items-center justify-between gap-3 rounded-sm border p-3">
+    <div
+      data-testid={`video-job-${job.id}`}
+      className="border-border flex flex-wrap items-center justify-between gap-3 rounded-sm border p-3"
+    >
       <div>
         <p className="font-medium">
           {job.animation.title} · {job.format.toUpperCase()}
         </p>
-        <p className="text-muted-foreground text-xs">
+        <p
+          data-testid="video-job-status"
+          className="text-muted-foreground text-xs"
+        >
           {job.status} · attempt {job.attempts}/{job.maxAttempts}
           {job.errorMessage ? ` · ${job.errorMessage}` : ""}
         </p>
       </div>
       <div className="flex gap-2">
         {job.status === "completed" && (
-          <Button variant="outline" size="sm" onClick={download}>
+          <Button
+            data-testid="video-download"
+            variant="outline"
+            size="sm"
+            onClick={download}
+          >
             Download
           </Button>
         )}
         {job.status === "failed" && (
-          <Button variant="outline" size="sm" onClick={onRetry}>
+          <Button
+            data-testid="video-retry"
+            variant="outline"
+            size="sm"
+            onClick={onRetry}
+          >
             Retry
           </Button>
         )}

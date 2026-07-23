@@ -16,6 +16,25 @@ CMS 后台位于 `/admin/content`，只允许 `User.isAdmin = true` 的用户访
 - 未发布文章的 `publishedAt` 为空，删除仍被文章引用的作者或标签会返回 409。
 - 所有查询和写操作都在服务端再次校验管理员身份，页面权限不能替代接口权限。
 
+## 公开博客读取
+
+- `getPublishedPosts` 提供分页列表，并支持按 `tagSlug` 过滤。
+- `getPublishedPost` 按 slug 返回文章详情；草稿和未来发布时间的文章统一返回 404。
+- 两个查询只返回公开内容所需的文章、作者名称和标签字段，不暴露后台管理字段。
+
+## 发布同步
+
+发布、编辑、撤回或删除已发布文章时，写事务会创建 `CmsPublicationEvent`。PgBoss 每分钟执行
+`syncCmsPublicationJob`，生成可供 Astro 消费的 `cms-posts.json`、`sitemap.xml` 和文章 metadata。
+产物使用临时文件原子替换，失败会按递增间隔重试，最多 5 次。
+
+可通过以下配置调整产物位置和 canonical 基地址：
+
+```text
+CMS_PUBLIC_OUTPUT_DIR=../blog/public
+CMS_PUBLIC_BASE_URL=http://localhost:3000
+```
+
 ## 迁移与测试
 
 ```bash

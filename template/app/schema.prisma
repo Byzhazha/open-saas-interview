@@ -101,7 +101,12 @@ model AiUsageLog {
   userId          String
   operation       String
   idempotencyKey  String
+  model           String       @default("gpt-3.5-turbo")
   status          String       @default("processing")
+  promptTokens    Int          @default(0)
+  completionTokens Int         @default(0)
+  totalTokens     Int          @default(0)
+  estimatedCostMicros Int      @default(0)
   errorCode       String?
   durationMs      Int?
   response        GptResponse? @relation(fields: [responseId], references: [id])
@@ -109,6 +114,23 @@ model AiUsageLog {
 
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
+}
+
+model CmsPublicationEvent {
+  id           String   @id @default(uuid())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  postId       String
+  slug         String
+  eventType    String
+  status       String   @default("pending")
+  attempts     Int      @default(0)
+  availableAt  DateTime @default(now())
+  processedAt  DateTime?
+  errorMessage String?
+
+  @@index([status, availableAt, createdAt])
+  @@index([postId, createdAt])
 }
 
 model Animation {
