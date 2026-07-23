@@ -9,6 +9,7 @@ import { seedMockUsers } from "./src/server/scripts/dbSeeds" with { type: "ref" 
 import { adminSpec } from "./src/admin/admin.wasp";
 import { analyticsSpec } from "./src/analytics/analytics.wasp";
 import { authConfig, authSpec } from "./src/auth/auth.wasp";
+import { contentSpec } from "./src/admin/content/content.wasp";
 import { head } from "./src/client/head.wasp";
 import { demoAiAppSpec } from "./src/demo-ai-app/demo-ai-app.wasp";
 import { fileUploadSpec } from "./src/file-upload/file-upload.wasp";
@@ -48,5 +49,6 @@ export default app({
     fileUploadSpec,
     analyticsSpec,
     adminSpec,
+    contentSpec,
   ],
 });

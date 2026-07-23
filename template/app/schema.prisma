@@ -42,6 +42,55 @@ model GptResponse {
   aiUsageLog                AiUsageLog?
 }
 
+model Author {
+  id          String   @id @default(uuid())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  displayName String
+  email       String?
+  bio         String?
+
+  posts       Post[]
+}
+
+model Tag {
+  id          String     @id @default(uuid())
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  name        String     @unique
+  slug        String     @unique
+
+  posts       PostTag[]
+}
+
+model Post {
+  id          String     @id @default(uuid())
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  title       String
+  slug        String     @unique
+  excerpt     String
+  content     String
+  status      String     @default("draft")
+  publishedAt DateTime?
+  author      Author     @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  authorId    String
+  tags        PostTag[]
+
+  @@index([status, publishedAt])
+  @@index([authorId, updatedAt])
+}
+
+model PostTag {
+  postId      String
+  tagId       String
+  post        Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tag         Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+  @@index([tagId])
+}
+
 model AiUsageLog {
   id              String       @id @default(uuid())
   createdAt       DateTime     @default(now())
