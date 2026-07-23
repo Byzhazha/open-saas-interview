@@ -28,6 +28,8 @@ model User {
   tasks                     Task[]
   files                     File[]
   aiUsageLogs               AiUsageLog[]
+  animations                Animation[]
+  animationVideoJobs        AnimationVideoJob[]
 }
 
 model GptResponse {
@@ -107,6 +109,43 @@ model AiUsageLog {
 
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
+}
+
+model Animation {
+  id          String                @id @default(uuid())
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  title       String
+  htmlContent String
+  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  videoJobs   AnimationVideoJob[]
+
+  @@index([userId, updatedAt])
+}
+
+model AnimationVideoJob {
+  id              String    @id @default(uuid())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  animation       Animation @relation(fields: [animationId], references: [id], onDelete: Cascade)
+  animationId     String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  format          String
+  status          String    @default("queued")
+  durationSeconds Int       @default(5)
+  fps             Int       @default(30)
+  attempts        Int       @default(0)
+  maxAttempts     Int       @default(3)
+  queueJobId      String?
+  outputS3Key     String?
+  errorMessage    String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+
+  @@index([userId, createdAt])
+  @@index([animationId, format, status])
 }
 
 model Task {

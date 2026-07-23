@@ -2,6 +2,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  PutObjectCommand,
   S3Client,
   S3ServiceException,
 } from "@aws-sdk/client-s3";
@@ -65,6 +66,26 @@ export const deleteFileFromS3 = async ({ s3Key }: { s3Key: string }) => {
     Key: s3Key,
   });
   await s3Client.send(command);
+};
+
+/** 将后台任务生成的二进制文件写入同一 S3 桶，下载仍通过限时签名 URL 完成。 */
+export const uploadBinaryToS3 = async ({
+  s3Key,
+  body,
+  contentType,
+}: {
+  s3Key: string;
+  body: Buffer;
+  contentType: string;
+}) => {
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: env.AWS_S3_FILES_BUCKET,
+      Key: s3Key,
+      Body: body,
+      ContentType: contentType,
+    }),
+  );
 };
 
 export const checkFileExistsInS3 = async ({ s3Key }: { s3Key: string }) => {

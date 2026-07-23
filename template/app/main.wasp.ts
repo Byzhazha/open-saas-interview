@@ -1,6 +1,7 @@
 import { app, page, route } from "@wasp.sh/spec";
 
 import { App } from "./src/client/App" with { type: "ref" };
+import { animationSpec } from "./src/animation/animation.wasp";
 import { NotFoundPage } from "./src/client/components/NotFoundPage" with { type: "ref" };
 import { serverEnvValidationSchema } from "./src/env" with { type: "ref" };
 import { LandingPage } from "./src/landing-page/LandingPage" with { type: "ref" };
@@ -43,6 +44,7 @@ export default app({
     route("LandingPageRoute", "/", page(LandingPage), { prerender: true }),
     route("NotFoundRoute", "*", page(NotFoundPage)),
     authSpec,
+    animationSpec,
     userSpec,
     demoAiAppSpec,
     paymentSpec,
