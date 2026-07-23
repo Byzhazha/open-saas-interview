@@ -149,6 +149,8 @@ function NewTaskForm({
       setIsPlanGenerating(true);
       const response = await generateGptResponse({
         hours: todaysHours,
+        // 每次生成使用独立请求键，服务端可据此识别网络重试和重复提交。
+        idempotencyKey: crypto.randomUUID(),
       });
       if (response) {
         setResponse(response);

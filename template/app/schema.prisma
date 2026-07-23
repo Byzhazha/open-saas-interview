@@ -21,11 +21,13 @@ model User {
   subscriptionPlan          String?         // 'hobby', 'pro'
   datePaid                  DateTime?
   credits                   Int             @default(3)
+  aiRequestsInFlight        Int             @default(0)
 
   gptResponses              GptResponse[]
   contactFormMessages       ContactFormMessage[]
   tasks                     Task[]
   files                     File[]
+  aiUsageLogs               AiUsageLog[]
 }
 
 model GptResponse {
@@ -37,6 +39,25 @@ model GptResponse {
   userId                    String
 
   content                   String
+  aiUsageLog                AiUsageLog?
+}
+
+model AiUsageLog {
+  id              String       @id @default(uuid())
+  createdAt       DateTime     @default(now())
+  completedAt     DateTime?
+  user            User         @relation(fields: [userId], references: [id])
+  userId          String
+  operation       String
+  idempotencyKey  String
+  status          String       @default("processing")
+  errorCode       String?
+  durationMs      Int?
+  response        GptResponse? @relation(fields: [responseId], references: [id])
+  responseId      String?      @unique
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
 }
 
 model Task {

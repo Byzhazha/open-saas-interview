@@ -1,4 +1,4 @@
-import type { PrismaPromise } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import type { GptResponse, Task, User } from "wasp/entities";
 import { env, HttpError, prisma } from "wasp/server";
@@ -13,13 +13,21 @@ import type {
 import * as z from "zod";
 import { SubscriptionStatus } from "../payment/plans";
 import { ensureArgsSchemaOrThrowHttpError } from "../server/validation";
+import {
+  AiUsageStatus,
+  getErrorCode,
+  getReservationErrorStatus,
+  idempotencyKeySchema,
+  MAX_CONCURRENT_AI_REQUESTS,
+} from "./aiUsage";
 import { GeneratedSchedule, generatedScheduleSchema } from "./schedule";
 
 const openAi = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
 //#region Actions
 const generateGptResponseInputSchema = z.object({
-  hours: z.number(),
+  hours: z.number().min(1).max(24),
+  idempotencyKey: idempotencyKeySchema.optional(),
 });
 
 type GenerateGptResponseInput = z.infer<typeof generateGptResponseInputSchema>;
@@ -35,67 +43,159 @@ export const generateGptResponse: GenerateGptResponse<
     );
   }
 
-  const { hours } = ensureArgsSchemaOrThrowHttpError(
+  const { hours, idempotencyKey } = ensureArgsSchemaOrThrowHttpError(
     generateGptResponseInputSchema,
     rawArgs,
   );
-  const tasks = await context.entities.Task.findMany({
+  const requestKey = idempotencyKey ?? randomUUID();
+
+  const isSubscribed = isUserSubscribed(context.user);
+  const existingLog = await context.entities.AiUsageLog.findUnique({
     where: {
-      user: {
-        id: context.user.id,
+      userId_idempotencyKey: {
+        userId: context.user.id,
+        idempotencyKey: requestKey,
       },
     },
+    include: { response: true },
   });
 
-  console.log("Calling open AI api");
-  const generatedSchedule = await generateScheduleWithGpt(tasks, hours);
-  if (generatedSchedule === null) {
+  if (existingLog) {
+    if (
+      existingLog.status === AiUsageStatus.Completed &&
+      existingLog.response?.content
+    ) {
+      return generatedScheduleSchema.parse(
+        JSON.parse(existingLog.response.content),
+      );
+    }
     throw new HttpError(
-      500,
-      "Encountered a problem in communication with OpenAI",
+      409,
+      existingLog.status === AiUsageStatus.Processing
+        ? "The same AI request is already being processed"
+        : "The idempotency key has already been used",
     );
   }
 
-  const createResponse = context.entities.GptResponse.create({
-    data: {
-      user: { connect: { id: context.user.id } },
-      content: JSON.stringify(generatedSchedule),
-    },
-  });
-
-  const transactions: PrismaPromise<GptResponse | User>[] = [createResponse];
-
-  // We decrement the credits for users without an active subscription
-  // after using up tokens to get a daily plan from Chat GPT.
-  //
-  // This way, users don't feel cheated if something goes wrong.
-  // On the flipside, users can theoretically abuse this and spend more
-  // credits than they have, but the damage should be pretty limited.
-  //
-  // Think about which option you prefer for your app and edit the code accordingly.
-  if (!isUserSubscribed(context.user)) {
-    if (context.user.credits > 0) {
-      const decrementCredit = context.entities.User.update({
-        where: { id: context.user.id },
+  let reservation;
+  try {
+    // 在调用供应商前原子预占额度和并发槽，避免并发请求绕过额度检查。
+    reservation = await prisma.$transaction(async (tx) => {
+      const updatedUsers = await tx.user.updateMany({
+        where: {
+          id: context.user!.id,
+          aiRequestsInFlight: { lt: MAX_CONCURRENT_AI_REQUESTS },
+          ...(isSubscribed ? {} : { credits: { gt: 0 } }),
+        },
         data: {
-          credits: {
-            decrement: 1,
-          },
+          aiRequestsInFlight: { increment: 1 },
+          ...(isSubscribed ? {} : { credits: { decrement: 1 } }),
         },
       });
-      transactions.push(decrementCredit);
-    } else {
-      throw new HttpError(
-        402,
-        "User has no subscription and is out of credits",
-      );
+
+      if (updatedUsers.count !== 1) {
+        const currentUser = await tx.user.findUnique({
+          where: { id: context.user!.id },
+          select: { credits: true, aiRequestsInFlight: true },
+        });
+        throw new HttpError(
+          getReservationErrorStatus(
+            isSubscribed,
+            currentUser?.credits ?? 0,
+            currentUser?.aiRequestsInFlight ?? MAX_CONCURRENT_AI_REQUESTS,
+          ),
+          isSubscribed || (currentUser?.credits ?? 0) > 0
+            ? "Too many AI requests are running"
+            : "User has no subscription and is out of credits",
+        );
+      }
+
+      return tx.aiUsageLog.create({
+        data: {
+          userId: context.user!.id,
+          operation: "generate_schedule",
+          idempotencyKey: requestKey,
+          status: AiUsageStatus.Processing,
+        },
+      });
+    });
+  } catch (error) {
+    // 两个相同请求同时到达时由数据库唯一索引裁决，并统一返回幂等冲突。
+    const duplicateLog = await context.entities.AiUsageLog.findUnique({
+      where: {
+        userId_idempotencyKey: {
+          userId: context.user.id,
+          idempotencyKey: requestKey,
+        },
+      },
+    });
+    if (duplicateLog) {
+      throw new HttpError(409, "The idempotency key has already been used");
     }
+    throw error;
   }
 
-  console.log("Decrementing credits and saving response");
-  await prisma.$transaction(transactions);
+  const startedAt = Date.now();
+  try {
+    const tasks = await context.entities.Task.findMany({
+      where: {
+        user: {
+          id: context.user.id,
+        },
+      },
+    });
+    const generatedSchedule = await generateScheduleWithGpt(tasks, hours);
+    if (generatedSchedule === null) {
+      throw new Error("OpenAI returned no structured schedule");
+    }
 
-  return generatedSchedule;
+    // 响应、日志完成状态和并发槽位释放必须一次提交，避免产生“扣费但无结果”的孤立状态。
+    const createResponse = await prisma.$transaction(async (tx) => {
+      const response = await tx.gptResponse.create({
+        data: {
+          userId: context.user!.id,
+          content: JSON.stringify(generatedSchedule),
+        },
+      });
+      await tx.aiUsageLog.update({
+        where: { id: reservation.id },
+        data: {
+          status: AiUsageStatus.Completed,
+          completedAt: new Date(),
+          durationMs: Date.now() - startedAt,
+          responseId: response.id,
+        },
+      });
+      await tx.user.update({
+        where: { id: context.user!.id },
+        data: { aiRequestsInFlight: { decrement: 1 } },
+      });
+      return response;
+    });
+
+    return JSON.parse(createResponse.content) as GeneratedSchedule;
+  } catch (error) {
+    // 供应商或解析失败时释放槽位并退回预扣额度，调用日志保留失败原因供后台统计。
+    await prisma.$transaction([
+      prisma.aiUsageLog.update({
+        where: { id: reservation.id },
+        data: {
+          status: AiUsageStatus.Failed,
+          completedAt: new Date(),
+          durationMs: Date.now() - startedAt,
+          errorCode: getErrorCode(error),
+        },
+      }),
+      prisma.user.update({
+        where: { id: context.user!.id },
+        data: {
+          aiRequestsInFlight: { decrement: 1 },
+          ...(isSubscribed ? {} : { credits: { increment: 1 } }),
+        },
+      }),
+    ]);
+    throw new HttpError(502, "AI provider request failed", { cause: error });
+  }
 };
 
 function isUserSubscribed(user: User) {
